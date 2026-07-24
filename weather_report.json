@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-07-24T12:44:19.135103+00:00",
+  "anomaly_threshold_stddevs": 2.0,
+  "results": [
+    {
+      "city": "New York",
+      "current_temp": 20.7,
+      "timestamp": "2026-07-24T12:30",
+      "z_score": 2.862,
+      "anomalous": true,
+      "note": null
+    },
+    {
+      "city": "London",
+      "current_temp": 26.3,
+      "timestamp": "2026-07-24T12:30",
+      "z_score": 16.532,
+      "anomalous": true,
+      "note": null
+    },
+    {
+      "city": "Tokyo",
+      "current_temp": 26.5,
+      "timestamp": "2026-07-24T12:30",
+      "z_score": -4.917,
+      "anomalous": true,
+      "note": null
+    }
+  ]
+}

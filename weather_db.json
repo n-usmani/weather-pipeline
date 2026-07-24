@@ -1,0 +1,92 @@
+[
+  {
+    "city": "New York",
+    "temperature": 16.0,
+    "timestamp": "2026-07-20T06:30"
+  },
+  {
+    "city": "New York",
+    "temperature": 17.0,
+    "timestamp": "2026-07-21T06:30"
+  },
+  {
+    "city": "New York",
+    "temperature": 18.0,
+    "timestamp": "2026-07-22T06:30"
+  },
+  {
+    "city": "New York",
+    "temperature": 19.0,
+    "timestamp": "2026-07-23T06:30"
+  },
+  {
+    "city": "New York",
+    "temperature": 17.5,
+    "timestamp": "2026-07-24T06:30"
+  },
+  {
+    "city": "London",
+    "temperature": 10.0,
+    "timestamp": "2026-07-20T06:30"
+  },
+  {
+    "city": "London",
+    "temperature": 11.0,
+    "timestamp": "2026-07-21T06:30"
+  },
+  {
+    "city": "London",
+    "temperature": 9.0,
+    "timestamp": "2026-07-22T06:30"
+  },
+  {
+    "city": "London",
+    "temperature": 10.5,
+    "timestamp": "2026-07-23T06:30"
+  },
+  {
+    "city": "London",
+    "temperature": 11.5,
+    "timestamp": "2026-07-24T06:30"
+  },
+  {
+    "city": "Tokyo",
+    "temperature": 30.0,
+    "timestamp": "2026-07-20T06:30"
+  },
+  {
+    "city": "Tokyo",
+    "temperature": 31.0,
+    "timestamp": "2026-07-21T06:30"
+  },
+  {
+    "city": "Tokyo",
+    "temperature": 29.0,
+    "timestamp": "2026-07-22T06:30"
+  },
+  {
+    "city": "Tokyo",
+    "temperature": 30.5,
+    "timestamp": "2026-07-23T06:30"
+  },
+  {
+    "city": "Tokyo",
+    "temperature": 30.2,
+    "timestamp": "2026-07-24T06:30"
+  },
+  {
+    "city": "New York",
+    "temperature": 20.7,
+    "timestamp": "2026-07-24T12:30"
+  },
+  {
+    "city": "London",
+    "temperature": 26.3,
+    "timestamp": "2026-07-24T12:30"
+  },
+  {
+    "city": "Tokyo",
+    "temperature": 26.5,
+    "timestamp": "2026-07-24T12:30"
+  }
+]
