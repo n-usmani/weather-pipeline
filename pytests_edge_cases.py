@@ -37,6 +37,40 @@ def read_report(path):
         return handle.read()
 
 
+class FakeResp:
+    """Minimal stand-in for the urlopen response context manager."""
+
+    def __init__(self, data: bytes):
+        self._data = data
+
+    def read(self):
+        return self._data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def set_urlopen(monkeypatch, *, body=None, exc=None):
+    """Patch wp.urllib.request.urlopen to return `body` bytes or raise `exc`."""
+    def fake_urlopen(url, timeout=None):
+        if exc is not None:
+            raise exc
+        return FakeResp(body)
+    monkeypatch.setattr(wp.urllib.request, "urlopen", fake_urlopen)
+
+
+def make_fake_date(year, month, day):
+    """A date subclass whose today() is fixed; all real date math still works."""
+    class _FakeDate(wp.date):
+        @classmethod
+        def today(cls):
+            return cls(year, month, day)
+    return _FakeDate
+
+
 # --- fetch_weather -----------------------------------------------------------
 
 def test_fetch_weather_non_numeric_temperature(monkeypatch):
@@ -174,3 +208,151 @@ def test_report_output_contains_no_nan_token(monkeypatch, tmp_path):
     )
     wp.report()
     assert "NaN" not in read_report(out), "report wrote invalid JSON (NaN token)"
+
+
+# --- _get_json (hardening / documentation) -----------------------------------
+
+def test_get_json_returns_bare_list(monkeypatch):
+    # json.loads happily parses a top-level array. _get_json returns it as-is,
+    # so a non-dict CAN escape to callers -- which is exactly why fetch_weather /
+    # _fetch_history_year now isinstance-guard the payload.
+    set_urlopen(monkeypatch, body=b"[1, 2, 3]")
+    assert wp._get_json("http://x") == [1, 2, 3]
+
+
+def test_get_json_returns_none_for_json_null(monkeypatch):
+    # A bare `null` body parses to Python None -- another non-dict a naive
+    # caller would blow up on.
+    set_urlopen(monkeypatch, body=b"null")
+    assert wp._get_json("http://x") is None
+
+
+def test_get_json_non_utf8_body(monkeypatch):
+    # Undecodable bytes raise UnicodeDecodeError, a ValueError subclass, so the
+    # existing handler should catch it and re-raise a clean "bad response".
+    set_urlopen(monkeypatch, body=b"\xff\xfe\xff")
+    with pytest.raises(ValueError) as info:
+        wp._get_json("http://x")
+    assert "bad response" in str(info.value)
+
+
+# --- _fetch_history_year (hardening / documentation) -------------------------
+
+def test_fetch_history_year_unequal_lengths_truncate(monkeypatch):
+    # zip() pairs by index and stops at the shorter list: the extra timestamp
+    # "c" is silently dropped. Documents that behaviour so a future change that
+    # needs strict alignment has a tripwire.
+    payload = {"daily": {"time": ["a", "b", "c"],
+                         "temperature_2m_mean": [10, 11]}}
+    monkeypatch.setattr(wp, "_get_json", lambda url: payload)
+    rows = wp._fetch_history_year(0, 0, wp.date(2019, 6, 15))
+    assert rows == [
+        {"temperature": 10.0, "timestamp": "a"},
+        {"temperature": 11.0, "timestamp": "b"},
+    ]
+
+
+def test_fetch_history_year_drops_nan(monkeypatch):
+    # NaN must be filtered like a null so it never poisons downstream stats.
+    payload = {"daily": {"time": ["a", "b", "c"],
+                         "temperature_2m_mean": [10, float("nan"), 12]}}
+    monkeypatch.setattr(wp, "_get_json", lambda url: payload)
+    rows = wp._fetch_history_year(0, 0, wp.date(2019, 6, 15))
+    assert rows == [
+        {"temperature": 10.0, "timestamp": "a"},
+        {"temperature": 12.0, "timestamp": "c"},
+    ]
+
+
+# --- init_db (hardening / documentation) -------------------------------------
+
+def test_init_db_jan_1_anchors_stay_jan_1(monkeypatch):
+    # Anchoring on Jan 1 must not malform when the +/- window later crosses back
+    # into the previous December (that subtraction happens inside
+    # _fetch_history_year). The anchors themselves stay on Jan 1 of past years.
+    monkeypatch.setattr(wp, "date", make_fake_date(2021, 1, 1))
+    anchors = []
+    monkeypatch.setattr(
+        wp, "_fetch_history_year",
+        lambda lat, long, anchor: anchors.append(anchor) or [],
+    )
+    wp.init_db()
+    assert anchors, "no anchors were produced"
+    assert all(a.month == 1 and a.day == 1 for a in anchors)
+
+
+def test_init_db_zero_history_years(monkeypatch):
+    # HISTORY_YEARS = 0 -> the range loop never runs -> empty db, no fetch calls,
+    # no crash.
+    monkeypatch.setattr(wp, "date", make_fake_date(2020, 6, 15))
+    monkeypatch.setattr(wp, "HISTORY_YEARS", 0)
+
+    def should_not_call(*args, **kwargs):
+        raise AssertionError("_fetch_history_year must not be called")
+
+    monkeypatch.setattr(wp, "_fetch_history_year", should_not_call)
+    wp.init_db()
+    assert wp._db == []
+
+
+def test_init_db_normal_date_never_triggers_feb29_fallback(monkeypatch):
+    # For an ordinary today (June 15) the Feb-29 day-1 fallback must never fire:
+    # every anchor keeps day == 15 (no silent off-by-one).
+    monkeypatch.setattr(wp, "date", make_fake_date(2020, 6, 15))
+    anchors = []
+    monkeypatch.setattr(
+        wp, "_fetch_history_year",
+        lambda lat, long, anchor: anchors.append(anchor) or [],
+    )
+    wp.init_db()
+    assert anchors
+    assert all(a.month == 6 and a.day == 15 for a in anchors)
+
+
+# --- insert_readings (hardening / documentation) -----------------------------
+
+def test_insert_readings_error_key_wins_over_valid_data():
+    # Even with a perfectly good temperature, the presence of "error" must
+    # veto the insert.
+    wp.insert_readings({"city": "X", "temperature": 5.0, "error": "boom"})
+    assert wp._db == []
+
+
+def test_insert_readings_row_without_city_is_orphaned():
+    # A row missing "city" is still inserted (no error key), but query_history
+    # can never retrieve it -- documents that ingest does not enforce a city.
+    wp.insert_readings({"temperature": 5.0, "timestamp": "t"})
+    assert len(wp._db) == 1
+    assert wp.query_history("New York") == []
+
+
+def test_insert_readings_accepts_non_dict_argument():
+    # Loose contract: `"error" in reading` is a membership test that a list
+    # passes without being a real reading, so junk is appended rather than
+    # rejected. Documents the gap in case we later want to tighten it.
+    wp.insert_readings(["not", "a", "reading"])
+    assert wp._db == [["not", "a", "reading"]]
+
+
+# --- query_history (hardening / documentation) -------------------------------
+
+def test_query_history_none_city_matches_none_query():
+    # A row whose city is None is matched by querying None (both sides .get()
+    # to None). Documents that None is a real, matchable key here.
+    wp._db.append({"city": None, "temperature": 1.0})
+    assert wp.query_history(None) == [{"city": None, "temperature": 1.0}]
+
+
+def test_query_history_returns_live_references():
+    # query_history returns the actual db rows, not copies: mutating a returned
+    # row mutates the database. A tripwire before anyone relies on isolation.
+    wp._db.append({"city": "A", "temperature": 1.0})
+    rows = wp.query_history("A")
+    rows[0]["temperature"] = 999.0
+    assert wp._db[0]["temperature"] == 999.0
+
+
+def test_query_history_is_case_sensitive():
+    # "london" != "London": an exact match miss returns nothing.
+    wp._db.append({"city": "London", "temperature": 1.0})
+    assert wp.query_history("london") == []

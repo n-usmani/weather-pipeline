@@ -18,6 +18,7 @@ Design (per SPEC.md):
 """
 
 import json
+import math
 import statistics
 import urllib.error
 import urllib.request
@@ -60,6 +61,18 @@ def _get_json(url: str) -> dict:
         raise ValueError(f"bad response: {exc}")
 
 
+def _valid_temp(value):
+    # Return `value` as a float only if it is a real, finite number; otherwise
+    # None. This is the single gate for "is this a usable reading?" -- NaN,
+    # None, booleans, and non-numeric junk all collapse to None ("no reading"),
+    # so nothing fake is ever stored or fed to statistics.
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and math.isfinite(value):
+        return float(value)
+    return None
+
+
 # --- Functions ---------------------------------------------------------------
 
 def fetch_weather(city: str, lat: float, long: float) -> dict:
@@ -76,14 +89,17 @@ def fetch_weather(city: str, lat: float, long: float) -> dict:
         # 3. if there's any error, return {"city": city, "error": ...}
         return {"city": city, "error": str(exc)}
 
-    daily = payload.get("daily") or {}
+    daily = payload.get("daily") if isinstance(payload, dict) else None
+    if not isinstance(daily, dict):
+        return {"city": city, "error": "missing temperature in response"}
     times = daily.get("time") or []
     temps = daily.get("temperature_2m_mean") or []
-    if not times or not temps or temps[0] is None:
+    temp = _valid_temp(temps[0]) if times and temps else None
+    if temp is None:
         return {"city": city, "error": "missing temperature in response"}
 
     # 4. otherwise, extract temperature, timestamp -> return as dict
-    return {"city": city, "temperature": float(temps[0]), "timestamp": times[0]}
+    return {"city": city, "temperature": temp, "timestamp": times[0]}
 
 
 def _fetch_history_year(lat: float, long: float, anchor: date) -> list[dict]:
@@ -96,13 +112,16 @@ def _fetch_history_year(lat: float, long: float, anchor: date) -> list[dict]:
         f"&daily=temperature_2m_mean&timezone=UTC"
     )
     payload = _get_json(url)  # may raise ValueError; caller handles
-    daily = payload.get("daily") or {}
+    daily = payload.get("daily") if isinstance(payload, dict) else None
+    if not isinstance(daily, dict):
+        return []
     times = daily.get("time") or []
     temps = daily.get("temperature_2m_mean") or []
     rows = []
     for t, temp in zip(times, temps):
-        if temp is not None:
-            rows.append({"temperature": float(temp), "timestamp": t})
+        temp = _valid_temp(temp)
+        if temp is not None:  # skip only the bad row, keep the rest of the year
+            rows.append({"temperature": temp, "timestamp": t})
     return rows
 
 
@@ -147,11 +166,15 @@ def query_history(city: str) -> list[dict]:
 def compute_anomaly(todays_temp: dict, past_readings: list[dict]):
     # if no history, return "insufficient data"
     temps = [
-        row["temperature"]
-        for row in past_readings
-        if isinstance(row.get("temperature"), (int, float))
+        v for v in (_valid_temp(row.get("temperature")) for row in past_readings)
+        if v is not None
     ]
     if len(temps) < 2:
+        return "insufficient data"
+
+    # today's reading must itself be a real number to compare against
+    today = _valid_temp(todays_temp.get("temperature")) if isinstance(todays_temp, dict) else None
+    if today is None:
         return "insufficient data"
 
     # calculate mean of past readings
@@ -163,7 +186,7 @@ def compute_anomaly(todays_temp: dict, past_readings: list[dict]):
         return "insufficient variance to assess"
 
     # calculate z_score as deviation / stddev
-    return (todays_temp["temperature"] - mean) / stddev
+    return (today - mean) / stddev
 
 
 def report() -> None:
@@ -189,7 +212,14 @@ def report() -> None:
 
         z = compute_anomaly(current, history)
 
-        temps = [r["temperature"] for r in history]
+        # None (JSON null) is our contract for "no usable reading" -- never a
+        # fake number. Same validation gate as compute_anomaly, so the reported
+        # count/mean can't disagree with what the z-score was computed from.
+        current_temp = _valid_temp(current.get("temperature"))
+        temps = [
+            v for v in (_valid_temp(r.get("temperature")) for r in history)
+            if v is not None
+        ]
         if isinstance(z, (int, float)):
             z_value = round(z, 3)
             anomalous = abs(z) >= ANOMALY_THRESHOLD
@@ -202,7 +232,7 @@ def report() -> None:
         results.append({
             "city": city,
             "date": current["timestamp"],
-            "current_temp": current["temperature"],
+            "current_temp": current_temp,
             "history_count": len(temps),
             "history_mean": round(statistics.mean(temps), 2) if temps else None,
             "z_score": z_value,
@@ -220,9 +250,12 @@ def report() -> None:
     }
     try:
         with open(OUTPUT_FILE, "w", encoding="utf-8") as handle:
-            json.dump(output, handle, indent=2)
+            # allow_nan=False -> emit strictly valid JSON; if a non-finite value
+            # ever slips past the gates above it raises here rather than writing
+            # the invalid bare token NaN/Infinity.
+            json.dump(output, handle, indent=2, allow_nan=False)
         print(f"Report written to {OUTPUT_FILE}")
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         print(f"Failed to write report: {exc}")
 
 
