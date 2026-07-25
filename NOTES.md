@@ -13,6 +13,14 @@
     - Reviewed briefly and gave all-clear for writing and running
     - All 38 tests passed
 
+    - Was concerned by the lack of test failures >> instructed agent to write 3+ tests for each major functions targeting exclusively edge cases
+    - Narrowed it down to the 10 tests that the agent anticipated would fail (to start with)
+    - All 10 failed! Agent says that all of them are due to "genuine defects." Time to address the issues.
+
+    - Looks like majority of the issues were caused by NaN being used for any unavailable data points. Instead changed it to "None", which is a valid JSON type.
+    - All 10 edge case tests pass!
+    - Now moving on to those other edge case tests that were filtered out while choosing 10.
+
 # Documenting Failures
     - Chronological method of accumulating history was not originally specified
     - Agent took it upon itself to decide on a like-with-like comparison approach, and then switched to a past-30-days comparsion approach
