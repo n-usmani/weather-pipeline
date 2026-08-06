@@ -1,4 +1,5 @@
 # SPEC: Weather Pipeline
+*Implementation written by Claude Code. This project was done to build familiarity with agentic coding — specifically, practicing decision-making balance between user and agent, overseeing/correcting agent assumptions, and tailoring a spec to hit the sweet spot between "specific enough to get correct behavior" and "not so over-specified that using an agent stops being worth it."*
 
 ## What It Does
 Pulls data from Open-Meteo's API about three pre-decided cities, and given a city's current reading and historical readings, compute how far the city's weather is from the historical average.
@@ -68,3 +69,10 @@ def report():
     #   so the reported count/mean can't disagree with what the z-score used
     # - a missing/non-numeric reading is reported as null, never a fake number
     # - the written JSON is always strictly valid (allow_nan=False)
+
+## Skills Practiced (Agentic Coding)
+- Writing a spec: precise about non-negotiable behavior (data contract, error handling, JSON validity), but leaving implementation details/decisions to the agent
+- Making explicit, documented decisions (e.g. calendar-window vs. trailing-window choice) to prevent agent from making bad calls or big/unwise assumptions
+- Anticipating edge cases (missing data, faulty API responses, zero-variance history) and proposing an approach before the agent has to improvise a fix
+- Reviewing and overseeing agent-generated code against the spec as a sanity check
+- User-vs-agent decision authority: deciding which choices are made by user and written in spec vs. which are safe to delegate to the agent's judgment
